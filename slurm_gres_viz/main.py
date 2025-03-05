@@ -39,9 +39,15 @@ def looper(func):  # decorator
 
 @looper
 def run(**display_options):
+    all_node_strings = os.popen('scontrol show nodes').read().strip().split('\n\n')
+    # worker로 시작하는 노드만 필터링
+    node_strings = [node_string for node_string in all_node_strings if node_string.startswith('NodeName=worker')]
+    
+    job_strings = os.popen('scontrol show job -d -a').read().strip().split('\n\n')
+    
     strings = {
-        'node_strings': os.popen('scontrol show nodes').read().strip().split('\n\n'),
-        'job_strings': os.popen('scontrol show job -d -a').read().strip().split('\n\n'),
+        'node_strings': node_strings,
+        'job_strings': job_strings,
     }
     viz = SlurmTresVisualizer(**strings, **display_options)
     viz.show()

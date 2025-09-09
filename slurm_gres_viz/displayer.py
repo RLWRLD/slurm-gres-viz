@@ -187,9 +187,9 @@ class Legend:  # Lower body
         self.show_gpu_util = show_gpu_util
         self.show_only_mine = show_only_mine
 
-        self.default_colnames = ['colors', 'user_id', 'job_id', 'job_arr_id', 'job_arr_task_id', 'job_name', 'node_name', 'gpus', 'cpus', 'mem']
+        self.default_colnames = ['colors', 'user_id', 'job_id', 'job_arr_id', 'job_arr_task_id', 'node_name', 'gpus', 'cpus', 'mem', 'job_name']
         self.default_display_colnames = [colname.replace('job_arr_task_id', 'arr_idx').upper() for colname in self.default_colnames if colname != 'job_arr_id']
-        self.default_aligns = pd.Series(['<', '<', '>', '<', '<', '<', '^', '^', '>', '>'], self.default_colnames)
+        self.default_aligns = pd.Series(['<', '<', '>', '<', '<', '<', '^', '^', '>', '<'], self.default_colnames)
 
         self.df, self.display_colnames, self.aligns = self.build_df()
         self.widths = self.calculate_widths(self.df, self.display_colnames)
@@ -246,8 +246,8 @@ class Legend:  # Lower body
         for job in jobs:
             for nodename, tres_dict in job.tres_dict.items():
                 record = [
-                    job.userid, job.id, job.arrayjobid, job.arraytaskid, job.name.replace(' ', self.space_placeholder), nodename,
-                    ','.join(map(str, tres_dict['gpus'])), len(tres_dict['cpus']), int(tres_dict['mem'])
+                    job.userid, job.id, job.arrayjobid, job.arraytaskid, nodename,
+                    ','.join(map(str, tres_dict['gpus'])), len(tres_dict['cpus']), int(tres_dict['mem']), job.name.replace(' ', self.space_placeholder)
                 ]
                 records.append(record)
         return records

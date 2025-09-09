@@ -246,7 +246,7 @@ class Legend:  # Lower body
         for job in jobs:
             for nodename, tres_dict in job.tres_dict.items():
                 record = [
-                    job.userid, job.id, job.arrayjobid, job.arraytaskid, job.name, nodename,
+                    job.userid, job.id, job.arrayjobid, job.arraytaskid, job.name.replace(' ', self.space_placeholder), nodename,
                     ','.join(map(str, tres_dict['gpus'])), len(tres_dict['cpus']), int(tres_dict['mem'])
                 ]
                 records.append(record)

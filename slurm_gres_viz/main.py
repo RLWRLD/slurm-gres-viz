@@ -39,10 +39,7 @@ def looper(func):  # decorator
 
 @looper
 def run(**display_options):
-    all_node_strings = os.popen('scontrol show nodes').read().strip().split('\n\n')
-    # worker가 포함된 노드만 필터링
-    node_strings = [node_string for node_string in all_node_strings if 'worker' in node_string]
-    
+    node_strings = os.popen('scontrol show nodes').read().strip().split('\n\n')
     job_strings = os.popen('scontrol show job -d -a').read().strip().split('\n\n')
     
     strings = {

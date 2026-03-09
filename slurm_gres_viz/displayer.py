@@ -75,6 +75,7 @@ class DashBoard:  # Upper body
             mine_masks = self.all_mine_masks[node.name]
             occupancy_masks = self.all_occupancy_masks[node.name]
             gpu_items:List[str] = []
+            gpu_item = '-'
             for gpu_idx in range(self.max_num_node_gpus):
                 is_mine = mine_masks[gpu_idx]
                 is_occupied = occupancy_masks[gpu_idx]

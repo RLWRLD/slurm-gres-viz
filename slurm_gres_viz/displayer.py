@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple
 import os
+import shutil
 
 import pandas as pd
 import numpy as np
@@ -45,7 +46,8 @@ class DashBoard:  # Upper body
         self.show_gpu_util = show_gpu_util
         self.show_only_mine = show_only_mine
 
-        self.max_num_node_gpus = max(map(lambda node: node.num_gpus_total, self.nodes))
+        self.node_names = set(node.name for node in self.nodes)
+        self.max_num_node_gpus = max(map(lambda node: node.num_gpus_total, self.nodes), default=0)
         self.delimiter_within_gpu = '|'
         if sum([self.show_index, self.show_gpu_memory, self.show_gpu_util]) <= 1:
             self.delimiter_between_gpu = ''
@@ -118,6 +120,8 @@ class DashBoard:  # Upper body
             is_mine = os.environ['USER'] in job.userid
             for nodename, tres_dict in job.tres_dict.items():
                 for gpu_idx in tres_dict['gpus']:
+                    if not self.is_valid_gpu_index(nodename, gpu_idx):
+                        continue
                     will_be_hidden = self.show_only_mine and not is_mine
                     if not will_be_hidden:
                         content = colorize(all_gpu_items[nodename][gpu_idx], color)
@@ -146,8 +150,8 @@ class DashBoard:  # Upper body
 
     def calculate_widths(self):
         widths = {
-            'nodename': max(map(lambda node: len(node.name), self.nodes)),
-            'cpu': max(map(lambda node: np.log10(node.num_cpus_total).astype(int)+1, self.nodes)),
+            'nodename': max(map(lambda node: len(node.name), self.nodes), default=0),
+            'cpu': max(map(lambda node: np.log10(node.num_cpus_total).astype(int)+1, self.nodes), default=1),
             'mem': 6
             # why don't we have gpu items' width?
             # => as colorizer's width varies aligning with width does not work
@@ -161,7 +165,8 @@ class DashBoard:  # Upper body
             if is_mine:
                 for nodename, tres_dict in job.tres_dict.items():
                     for gpu_idx in tres_dict['gpus']:
-                        all_mine_masks[nodename][gpu_idx] = True
+                        if self.is_valid_gpu_index(nodename, gpu_idx):
+                            all_mine_masks[nodename][gpu_idx] = True
         return all_mine_masks
 
     def get_occupancy_mask(self):
@@ -169,8 +174,14 @@ class DashBoard:  # Upper body
         for job in self.jobs:
             for nodename, tres_dict in job.tres_dict.items():
                 for gpu_idx in tres_dict['gpus']:
-                    all_occupancy_masks[nodename][gpu_idx] = True
+                    if self.is_valid_gpu_index(nodename, gpu_idx):
+                        all_occupancy_masks[nodename][gpu_idx] = True
         return all_occupancy_masks
+
+    def is_valid_gpu_index(self, nodename, gpu_idx):
+        if nodename not in self.node_names:
+            return False
+        return 0 <= gpu_idx < self.max_num_node_gpus
 
 
 class Legend:  # Lower body
@@ -189,12 +200,17 @@ class Legend:  # Lower body
         self.show_gpu_util = show_gpu_util
         self.show_only_mine = show_only_mine
 
-        self.default_colnames = ['colors', 'user_id', 'job_id', 'job_arr_id', 'job_arr_task_id', 'node_name', 'gpus', 'cpus', 'mem', 'job_name']
-        self.default_display_colnames = [colname.replace('job_arr_task_id', 'arr_idx').upper() for colname in self.default_colnames if colname != 'job_arr_id']
-        self.default_aligns = pd.Series(['<', '<', '>', '<', '<', '<', '^', '^', '>', '<'], self.default_colnames)
+        self.default_colnames = ['colors', 'user_id', 'job_id', 'job_arr_id', 'job_arr_task_id', 'partition', 'job_name', 'node_name', 'gpus', 'cpus', 'mem']
+        self.default_display_colnames = [
+            colname.upper()
+            for colname in self.default_colnames
+            if colname not in ['job_arr_id', 'job_arr_task_id']
+        ]
+        self.default_aligns = pd.Series(['<', '<', '<', '<', '<', '<', '<', '^', '^', '>', '>'], self.default_colnames)
 
         self.df, self.display_colnames, self.aligns = self.build_df()
         self.widths = self.calculate_widths(self.df, self.display_colnames)
+        self.fit_to_terminal_width()
 
     def show(self):
         if not self.df.empty:
@@ -222,43 +238,126 @@ class Legend:  # Lower body
             df = df[df['user_id'].str.contains(os.environ['USER'])]
         color_legend = df['job_id'].map(lambda jid: colorize('********', get_color_from_idx(int(jid))))  # before the column job_id overwritten
         df['job_id'] = df['job_arr_id'].fillna(df['job_id'])  # firstly with job_arr_id, and overwrite with job_id only for none rows
+        df['job_id'] = self.compose_job_id_with_array_idx(df['job_id'], df['job_arr_task_id'])
         del df['job_arr_id']
+        del df['job_arr_task_id']
         df['gpus'] = df['gpus'].replace('', pd.NA).fillna('-')
+        df['gpus'] = df['gpus'].astype(str).str.replace(' ', self.space_placeholder)
         df['mem'] = df['mem'].astype(str) + f'{self.space_placeholder}GiB'
+        # Replace spaces in job_name with placeholder to prevent splitting
+        df['job_name'] = df['job_name'].astype(str).str.replace(' ', self.space_placeholder)
         # inserting the color legend
         df.insert(0, 'colors', color_legend)
         # masking multi-node jobs
-        duplicates = df.duplicated(subset=['job_id', 'job_arr_task_id'], keep='first')
-        df.loc[duplicates, ['colors', 'user_id', 'job_id', 'job_arr_task_id', 'job_name']] = self.space_placeholder
+        duplicates = df.duplicated(subset=['job_id', 'job_name'], keep='first')
+        df.loc[duplicates, ['colors', 'user_id', 'job_id', 'partition', 'job_name']] = self.space_placeholder
 
-        no_arr_job = df['job_arr_task_id'].replace(self.space_placeholder, pd.NA).isna().all()
         display_colnames = self.default_display_colnames.copy()
         aligns = self.default_aligns.copy()
-        if no_arr_job:
-            del df['job_arr_task_id']
-            del aligns['job_arr_task_id']
-            display_colnames.remove('ARR_IDX')
-        else:
-            df['job_arr_task_id'] = df['job_arr_task_id'].fillna(self.space_placeholder)
+        del aligns['job_arr_task_id']
 
         return df, display_colnames, aligns
+
+    def compose_job_id_with_array_idx(self, job_ids, arr_task_ids):
+        result = []
+        for job_id, arr_idx in zip(job_ids, arr_task_ids):
+            if pd.isna(arr_idx):
+                result.append(str(job_id))
+            else:
+                result.append(f'{job_id}({arr_idx})')
+        return result
 
     def build_records_from_jobs(self, jobs):
         records = []
         for job in jobs:
             for nodename, tres_dict in job.tres_dict.items():
                 record = [
-                    job.userid, job.id, job.arrayjobid, job.arraytaskid, nodename,
-                    ','.join(map(str, tres_dict['gpus'])), len(tres_dict['cpus']), int(tres_dict['mem']), job.name.replace(' ', self.space_placeholder)
+                    job.userid, job.id, job.arrayjobid, job.arraytaskid, job.partition, job.name, nodename,
+                    self.format_gpu_indices(tres_dict['gpus']), len(tres_dict['cpus']), int(tres_dict['mem'])
                 ]
                 records.append(record)
         return records
 
+    def format_gpu_indices(self, gpu_indices):
+        if not gpu_indices:
+            return '- (0)'
+        sorted_indices = sorted(set(gpu_indices))
+        compressed = []
+        start = prev = sorted_indices[0]
+        for idx in sorted_indices[1:]:
+            if idx == prev + 1:
+                prev = idx
+                continue
+            compressed.append(self._format_gpu_range(start, prev))
+            start = prev = idx
+        compressed.append(self._format_gpu_range(start, prev))
+        return f"{','.join(compressed)} ({len(sorted_indices)})"
+
+    def _format_gpu_range(self, start, end):
+        if start == end:
+            return f'{start}'
+        if end == start + 1:
+            return f'{start},{end}'
+        return f'{start}..{end}'
+
     def calculate_widths(self, df, display_colnames):
         tmp_df_for_calculating_width = pd.concat([df.astype(str), pd.DataFrame([display_colnames], columns=df.columns)], ignore_index=True)
-        widths = tmp_df_for_calculating_width.applymap(lambda elem: len(str(elem))).max()
+        widths = tmp_df_for_calculating_width.map(lambda elem: len(str(elem))).max()
         widths['colors'] = 8
         return widths
+
+    def fit_to_terminal_width(self):
+        if self.df.empty or 'job_name' not in self.df.columns:
+            return
+
+        terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
+        whole_width = self.get_table_width()
+        if whole_width > terminal_width and 'partition' in self.df.columns:
+            self.df['partition'] = self.df['partition'].map(self.truncate_partition_name)
+            self.widths = self.calculate_widths(self.df, self.display_colnames)
+
+        delimiter_total = (self.widths.shape[0] - 1) * len(self.delimiter_column)
+        fixed_width_without_jobname = int(self.widths.sum() - self.widths['job_name'])
+        available_jobname_width = terminal_width - delimiter_total - fixed_width_without_jobname
+        min_jobname_width = len('JOB_NAME')
+        new_jobname_width = max(min_jobname_width, available_jobname_width)
+
+        if new_jobname_width < self.widths['job_name']:
+            self.df['job_name'] = self.df['job_name'].map(
+                lambda v: self.truncate_text(v, new_jobname_width)
+            )
+            self.widths['job_name'] = new_jobname_width
+
+        # Final fallback for very narrow terminals.
+        # If truncation is still not enough, drop CPU/MEM columns.
+        if self.get_table_width() > terminal_width:
+            dropped_cols = [col for col in ['cpus', 'mem'] if col in self.df.columns]
+            if dropped_cols:
+                self.df = self.df.drop(columns=dropped_cols)
+                for col in dropped_cols:
+                    if col in self.aligns:
+                        del self.aligns[col]
+                self.display_colnames = [col.upper() for col in self.df.columns]
+                self.widths = self.calculate_widths(self.df, self.display_colnames)
+
+    def get_table_width(self):
+        return self.widths.sum() + (self.widths.shape[0]-1)*len(self.delimiter_column)
+
+    def truncate_text(self, value, max_width):
+        value = str(value)
+        if len(value) <= max_width:
+            return value
+        ellipsis = '...'
+        if max_width <= len(ellipsis):
+            return value[:max_width]
+        return value[:max_width-len(ellipsis)] + ellipsis
+
+    def truncate_partition_name(self, value):
+        value = str(value)
+        max_width = 12
+        if len(value) <= max_width:
+            return value
+        return value[:9] + '...'
 
 
 def get_color_from_idx(idx:int):

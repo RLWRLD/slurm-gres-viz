@@ -81,7 +81,8 @@ class DashBoard:  # Upper body
                 is_occupied = occupancy_masks[gpu_idx]
                 will_be_hidden = self.show_only_mine and not is_mine
                 if gpu_idx >= node.num_gpus_total:  # pseudo item to align, as colorizer's width varies aligning with width does not work
-                    gpu_items.append(' '*len(gpu_item))
+                    pad_len = len(gpu_items[-1]) if gpu_items else 1
+                    gpu_items.append(' ' * pad_len)
                 else:
                     gpu_item = []
                     if any([self.show_index, self.show_gpu_memory, self.show_gpu_util]):

@@ -45,7 +45,7 @@ class SlurmTresVisualizer:
 
     def get_node_infos(self):
         request_exporter = self.show_gpu_memory or self.show_gpu_util
-        node_ip_dict = get_ips_from_etchosts() if request_exporter else None
+        node_ip_dict = get_ips_from_scontrol_or_etchosts() if request_exporter else None
         def get_node(node_string):
             return Node(
                 node_string=node_string, node_ip_dict=node_ip_dict,
@@ -97,10 +97,21 @@ class SlurmTresVisualizer:
         displayer.show()
 
 
-def get_ips_from_etchosts() -> Dict[str,str]:
+def get_ips_from_scontrol_or_etchosts() -> Dict[str,str]:
+    """Try scontrol first (for ParallelCluster), fall back to /etc/hosts."""
+    try:
+        import subprocess
+        result = subprocess.run(['scontrol', 'show', 'nodes'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout:
+            node_names = re.findall(r'NodeName=(\S+)', result.stdout)
+            node_addrs = re.findall(r'NodeAddr=(\S+)', result.stdout)
+            if node_names:
+                return dict(zip(node_names, node_addrs))
+    except FileNotFoundError:
+        pass
     with open('/etc/hosts') as f:
         data = f.read()
     ip_pattern = r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-    ip_node_pairs:List[Tuple[str,str]] = re.findall(ip_pattern + r'\s*([\w-]*)', data)  # [(ip, nodename), ...]
-    ip_node_pairs = list(map(lambda tuple: tuple[::-1], ip_node_pairs))  # [(nodename, ip), ...]
+    ip_node_pairs:List[Tuple[str,str]] = re.findall(ip_pattern + r'\s*([\w-]*)', data)
+    ip_node_pairs = list(map(lambda tuple: tuple[::-1], ip_node_pairs))
     return dict(ip_node_pairs)
